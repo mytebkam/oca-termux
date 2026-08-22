@@ -15,7 +15,7 @@ A tiny wrapper around [OpenCode](https://opencode.ai) for **Termux**.
 ## Install
 
 ```bash
-git clone https://github.com/YOURUSER/oca-termux.git
+git clone https://github.com/mytebkam/oca-termux.git
 cd oca-termux
 ./install.sh
 oca setup      # installs opencode + nodejs/git/curl/ripgrep via pkg/npm
