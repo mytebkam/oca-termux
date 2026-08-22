@@ -7,6 +7,10 @@
       A G E N T · termux
 ```
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Language: Shell](https://img.shields.io/badge/Language-Shell-brightgreen.svg)](#)
+[![Repo: GitHub](https://img.shields.io/badge/Repo-GitHub-blue.svg)](https://github.com/mytebkam/oca-termux)
+
 # oca — OpenCode Agent, Termux edition
 
 A tiny wrapper around [OpenCode](https://opencode.ai) for **Termux**.
