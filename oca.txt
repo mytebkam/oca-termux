@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# oca — OpenCode Agent launcher for Termux
+# https://github.com/YOURUSER/oca-termux
+set -euo pipefail
+
+VERSION="1.0.0"
+
+C_G='\033[1;32m'; C_C='\033[1;36m'; C_Y='\033[1;33m'; C_R='\033[1;31m'; C_D='\033[2m'; C_0='\033[0m'
+
+banner() {
+  printf "${C_C}"
+  cat <<'ASCII'
+   ____   ____  _
+  / __ \ / ___|/ \
+ | |  | | |   / _ \
+ | |__| | |__/ ___ \
+  \____/ \____/_/  \_\
+      A G E N T · tmux/termux
+ASCII
+  printf "${C_0}${C_D}  oca v%s — cd, ask, ship.${C_0}\n\n" "$VERSION"
+}
+
+die() { printf "${C_R}✗ %s${C_0}\n" "$1" >&2; exit 1; }
+info() { printf "${C_C}➜ %s${C_0}\n" "$1"; }
+ok() { printf "${C_G}✔ %s${C_0}\n" "$1"; }
+warn() { printf "${C_Y}! %s${C_0}\n" "$1"; }
+
+DISTRO="ubuntu"
+
+have_proot_opencode() {
+  command -v proot-distro >/dev/null 2>&1 || return 1
+  proot-distro list --installed 2>/dev/null | grep -qi "$DISTRO"
+}
+
+# Runs opencode either natively (if available) or inside the ubuntu
+# proot-distro chroot, since the official npm binary has no Android build
+# and plain `npm i -g opencode-ai` fails on Termux with EBADPLATFORM.
+run_opencode() {
+  if command -v opencode >/dev/null 2>&1; then
+    opencode "$@"
+  elif have_proot_opencode; then
+    local cwd; cwd="$(pwd)"
+    local cmd="cd '$cwd' && opencode"
+    for a in "$@"; do cmd="$cmd $(printf '%q' "$a")"; done
+    proot-distro login "$DISTRO" --bind "$cwd":"$cwd" -- bash -lc "$cmd"
+  else
+    die "opencode not found (native or in proot-distro $DISTRO). Run: oca setup"
+  fi
+}
+
+need_opencode() {
+  command -v opencode >/dev/null 2>&1 || have_proot_opencode || die "opencode not found. Run: oca setup"
+}
+
+# ---- doctor: report on toolchain / PATH -----------------------------------
+doctor() {
+  banner
+  info "Environment check"
+  echo "  termux prefix : ${PREFIX:-N/A}"
+  echo "  shell         : $SHELL"
+  echo "  pwd           : $(pwd)"
+  echo
+
+  info "Core tools"
+  for bin in opencode node npm git bash curl rg fzf python; do
+    if command -v "$bin" >/dev/null 2>&1; then
+      ok "$bin  -> $(command -v "$bin")"
+    else
+      warn "$bin  -> not in PATH"
+    fi
+  done
+  echo
+
+  if command -v pkg >/dev/null 2>&1; then
+    info "Installed pkg packages (top 15)"
+    pkg list-installed 2>/dev/null | tail -n +2 | head -15 | sed 's/^/  /'
+  else
+    warn "pkg not available (not running in Termux?)"
+  fi
+  echo
+
+  info "Everything reachable via \$PATH:"
+  echo "$PATH" | tr ':' '\n' | sed 's/^/  /'
+}
+
+# ---- setup: install opencode + common deps ---------------------------------
+setup() {
+  banner
+
+  if command -v opencode >/dev/null 2>&1; then
+    ok "opencode already installed natively: $(opencode --version 2>/dev/null || echo unknown)"
+    echo; ok "Run: oca auth   then   cd into a project and run 'oca'"
+    return 0
+  fi
+
+  if command -v pkg >/dev/null 2>&1; then
+    info "Updating pkg and installing base deps (git, curl, proot-distro)"
+    pkg update -y && pkg install -y git curl proot-distro
+  else
+    warn "pkg not found — skipping Termux package install (not running in Termux?)"
+  fi
+
+  # Android/Termux ships no native opencode binary (npm package only
+  # targets darwin/linux/win32 x64/arm64), so a plain `npm i -g opencode-ai`
+  # fails here with EBADPLATFORM. We host it inside a real Ubuntu userland
+  # via proot-distro instead — that's a genuine glibc Linux, so the normal
+  # npm install works unmodified.
+  info "Termux/Android has no native opencode build — setting up Ubuntu via proot-distro"
+
+  if ! proot-distro list --installed 2>/dev/null | grep -qi "$DISTRO"; then
+    proot-distro install "$DISTRO" || die "proot-distro install $DISTRO failed"
+  else
+    ok "$DISTRO already installed"
+  fi
+
+  info "Installing node + opencode inside $DISTRO (this can take a few minutes)"
+  proot-distro login "$DISTRO" -- bash -lc "
+    set -e
+    apt update -y && apt install -y nodejs npm curl git
+    npm i -g opencode-ai@latest
+  " || die "opencode install inside $DISTRO failed"
+
+  ok "opencode installed inside proot-distro:$DISTRO"
+  echo
+  ok "Run: oca auth   (adds your model provider key)"
+  ok "Then: cd into a project and run 'oca'"
+}
+
+# ---- auth: passthrough to opencode auth, wherever opencode lives ----------
+auth() { run_opencode auth "$@"; }
+
+usage() {
+  banner
+  cat <<EOF
+Usage:
+  oca                          launch the agent (TUI) in the current folder
+  oca "do the thing"           one-shot: run a prompt against current folder
+  oca <path>                   cd into <path>, then launch the agent (TUI)
+  oca <path> "do the thing"    cd into <path>, then run a one-shot prompt
+
+  oca doctor                   show installed tools, PATH, pkg packages
+  oca setup                    install opencode (native, or via proot-distro Ubuntu)
+  oca auth                     run 'opencode auth' wherever opencode lives
+  oca -h | --help              show this help
+  oca -v | --version           show oca version
+EOF
+}
+
+# ---- main --------------------------------------------------------------
+main() {
+  case "${1:-}" in
+    ""|-h|--help|help) [ -z "${1:-}" ] || { usage; exit 0; } ;;
+  esac
+
+  case "${1:-}" in
+    doctor) doctor; exit 0 ;;
+    setup)  setup; exit 0 ;;
+    auth)   shift; auth "$@"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    -v|--version) echo "oca $VERSION"; exit 0 ;;
+  esac
+
+  local target_dir="."
+  local prompt=""
+
+  if [ -n "${1:-}" ] && [ -d "$1" ]; then
+    target_dir="$1"
+    shift
+    prompt="$*"
+  else
+    prompt="$*"
+  fi
+
+  cd "$target_dir" || die "no such directory: $target_dir"
+  need_opencode
+
+  banner
+  info "project: $(pwd)"
+  if [ -d .git ]; then
+    branch=$(git branch --show-current 2>/dev/null || echo "?")
+    info "git branch: $branch"
+  fi
+  echo
+
+  if [ -n "$prompt" ]; then
+    info "running one-shot prompt"
+    run_opencode run "$prompt"
+  else
+    info "launching interactive agent (Ctrl+C to quit)"
+    run_opencode
+  fi
+}
+
+main "$@"
